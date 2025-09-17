@@ -1,0 +1,116 @@
+# frogs_rabbit_leap.py
+# Classic puzzle: 3 East-bound (E) on the left, 3 West-bound (W) on the right, one blank rock(_).
+# Initial: ('E','E','E','_','W','W','W')
+# Goal:    ('W','W','W','_','E','E','E')
+# Rules: E moves right by 1 or jump right by 2 (over one rabbit).
+#        W moves left by 1 or jump left by 2 (over one rabbit).
+
+from collections import deque
+import time
+
+def get_successors(state):
+    """Return list of successor states from `state` following the movement rules."""
+    successors = []
+    n = len(state)
+    for i, animal in enumerate(state):
+        if animal == 'E':
+            # move right by 1
+            if i + 1 < n and state[i + 1] == '_':
+                new = list(state); new[i], new[i+1] = new[i+1], new[i]; successors.append(tuple(new))
+            # jump right over one frog
+            if i + 2 < n and state[i + 1] != '_' and state[i + 2] == '_':
+                new = list(state); new[i], new[i+2] = new[i+2], new[i]; successors.append(tuple(new))
+        elif animal == 'W':
+            # move left by 1
+            if i - 1 >= 0 and state[i - 1] == '_':
+                new = list(state); new[i], new[i-1] = new[i-1], new[i]; successors.append(tuple(new))
+            # jump left over one frog
+            if i - 2 >= 0 and state[i - 1] != '_' and state[i - 2] == '_':
+                new = list(state); new[i], new[i-2] = new[i-2], new[i]; successors.append(tuple(new))
+    return successors
+
+def bfs(start, goal):
+    """Breadth-first search -> returns dict with path and stats (BFS yields optimal path length)."""
+    queue = deque([(start, [])])
+    visited = set()
+    nodes_expanded = 0
+    while queue:
+        state, path = queue.popleft()
+        if state in visited:
+            continue
+        visited.add(state)
+        nodes_expanded += 1
+        new_path = path + [state]
+        if state == goal:
+            return {'path': new_path, 'nodes_expanded': nodes_expanded, 'visited': len(visited)}
+        for succ in get_successors(state):
+            if succ not in visited:
+                queue.append((succ, new_path))
+    return None
+
+def dfs_recursive(start, goal, max_depth=1000):
+    """Recursive DFS that avoids cycles along the current path only.
+       Returns the first path it finds (not guaranteed optimal)."""
+    nodes_expanded = 0
+    found_path = None
+
+    def dfs(node, path, seen):
+        nonlocal nodes_expanded, found_path
+        nodes_expanded += 1
+        if node == goal:
+            found_path = path + [node]
+            return True
+        if len(path) > max_depth:
+            return False
+        for succ in get_successors(node):
+            if succ in seen:
+                continue
+            if found_path is not None:
+                return True
+            if dfs(succ, path + [node], seen | {succ}):
+                return True
+        return False
+
+    dfs(start, [], {start})
+    return {'path': found_path, 'nodes_expanded': nodes_expanded, 'found': found_path is not None}
+
+def pretty_print_path(path):
+    for i, s in enumerate(path):
+        print(f"{i:2d}: {''.join(s)}")
+
+if __name__ == "__main__":
+    start = ('E','E','E','_','W','W','W')
+    goal  = ('W','W','W','_','E','E','E')
+
+    print("Search-space size: number of distinct arrangements = 7!/(3!3!1!) = 140")
+    print("Start:", ''.join(start), "Goal:", ''.join(goal))
+    print()
+
+    t0 = time.time()
+    bfs_res = bfs(start, goal)
+    t1 = time.time()
+    dfs_res = dfs_recursive(start, goal)
+    t2 = time.time()
+
+    print("BFS (guaranteed shortest path):")
+    if bfs_res:
+        print(" - nodes expanded:", bfs_res['nodes_expanded'])
+        print(" - visited states stored:", bfs_res['visited'])
+        print(" - states in solution:", len(bfs_res['path']))
+        print(" - moves (states-1):", len(bfs_res['path']) - 1)
+        print(" - time (s):", round(t1 - t0, 6))
+        pretty_print_path(bfs_res['path'])
+    else:
+        print("No solution found by BFS.")
+
+    print("\n" + "-"*50 + "\n")
+
+    print("DFS (first-found path; not guaranteed shortest):")
+    if dfs_res['found']:
+        print(" - nodes expanded (approx):", dfs_res['nodes_expanded'])
+        print(" - states in solution:", len(dfs_res['path']))
+        print(" - moves (states-1):", len(dfs_res['path']) - 1)
+        print(" - time (s):", round(t2 - t1, 6))
+        pretty_print_path(dfs_res['path'])
+    else:
+        print("No solution found by DFS.")
