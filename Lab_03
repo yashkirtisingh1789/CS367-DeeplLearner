@@ -1,0 +1,235 @@
+import random
+import time
+import itertools
+
+# --- Requirement B: k-SAT Problem Generator ---
+def generate_ksat(k, m, n):
+    """
+    Generates a random k-SAT formula.
+    Args:
+        k (int): Number of literals per clause.
+        m (int): Number of clauses.
+        n (int): Number of variables.
+    Returns:
+        list of sets: A list of clauses, where each clause is a set of literals.
+                      e.g., [{1, -2, 3}, {-1, 4, -5}]
+    """
+    formula = []
+    variables = range(1, n + 1)
+    for _ in range(m):
+        clause_vars = random.sample(variables, k)
+        clause = set()
+        for var in clause_vars:
+            if random.random() < 0.5:
+                clause.add(-var)
+            else:
+                clause.add(var)
+        formula.append(clause)
+    return formula
+
+# --- Requirement C: Two Different Heuristic Functions ---
+
+# CORRECTED: Renamed this function back to its original name to fix the NameError.
+# This function serves as BOTH the goal check and as Heuristic 1.
+def count_satisfied_clauses(assignment, formula):
+    """
+    Heuristic 1 & Goal Check: Counts the total number of clauses satisfied.
+    The goal is to maximize this value until it equals the total number of clauses.
+    """
+    count = 0
+    for clause in formula:
+        for literal in clause:
+            var_index = abs(literal) - 1
+            if (literal > 0 and assignment[var_index]) or \
+               (literal < 0 and not assignment[var_index]):
+                count += 1
+                break
+    return count
+
+def heuristic_satisfaction_level(assignment, formula):
+    """
+    Heuristic 2: Sums the number of true literals in each clause.
+    This gives more weight to assignments that "more strongly" satisfy the formula.
+    The goal is to maximize this value.
+    """
+    total_level = 0
+    for clause in formula:
+        level = 0
+        for literal in clause:
+            var_index = abs(literal) - 1
+            if (literal > 0 and assignment[var_index]) or \
+               (literal < 0 and not assignment[var_index]):
+                level += 1
+        total_level += level
+    return total_level
+
+# --- Requirement C: Local Search Algorithm Implementations ---
+
+def hill_climbing(formula, n, heuristic_func, max_restarts=10, max_flips=100):
+    """Solves SAT using Hill-Climbing with random restarts."""
+    for _ in range(max_restarts):
+        current_assignment = [random.choice([True, False]) for _ in range(n)]
+        
+        for _ in range(max_flips):
+            # The goal is ALWAYS to satisfy all clauses, so we use the specific function for this check.
+            if count_satisfied_clauses(current_assignment, formula) == len(formula):
+                return current_assignment, True
+
+            # The heuristic_func is used to guide the search for the best neighbor.
+            current_score = heuristic_func(current_assignment, formula)
+            best_neighbor_assignment = None
+            best_neighbor_score = -1
+
+            for i in range(n):
+                neighbor_assignment = current_assignment[:]
+                neighbor_assignment[i] = not neighbor_assignment[i]
+                neighbor_score = heuristic_func(neighbor_assignment, formula)
+                
+                if neighbor_score > best_neighbor_score:
+                    best_neighbor_score = neighbor_score
+                    best_neighbor_assignment = neighbor_assignment
+
+            if best_neighbor_score <= current_score:
+                break # Local maximum
+            
+            current_assignment = best_neighbor_assignment
+            
+    return current_assignment, count_satisfied_clauses(current_assignment, formula) == len(formula)
+
+def beam_search(formula, n, heuristic_func, beam_width, max_steps=100):
+    """Solves SAT using Beam Search."""
+    beam = [[random.choice([True, False]) for _ in range(n)] for _ in range(beam_width)]
+    
+    for _ in range(max_steps):
+        all_neighbors = []
+        for assignment in beam:
+            if count_satisfied_clauses(assignment, formula) == len(formula):
+                return assignment, True
+            
+            for i in range(n):
+                neighbor = assignment[:]
+                neighbor[i] = not neighbor[i]
+                all_neighbors.append(neighbor)
+        
+        unique_neighbors_set = {tuple(assign) for assign in all_neighbors}
+        scored_neighbors = [
+            (heuristic_func(list(assign), formula), list(assign)) 
+            for assign in unique_neighbors_set
+        ]
+        
+        scored_neighbors.sort(key=lambda x: x[0], reverse=True)
+        beam = [item[1] for item in scored_neighbors[:beam_width]]
+
+    for assignment in beam:
+        if count_satisfied_clauses(assignment, formula) == len(formula):
+            return assignment, True
+            
+    return None, False
+
+def variable_neighborhood_descent(formula, n, heuristic_func, max_restarts=5, max_steps=100):
+    """Solves SAT using Variable Neighborhood Descent (VND)."""
+    
+    def find_best_neighbor(assignment, k_flips):
+        best_neighbor = None
+        best_score = -1
+        current_score = heuristic_func(assignment, formula)
+
+        for indices_to_flip in itertools.combinations(range(n), k_flips):
+            neighbor = assignment[:]
+            for i in indices_to_flip:
+                neighbor[i] = not neighbor[i]
+            
+            neighbor_score = heuristic_func(neighbor, formula)
+            if neighbor_score > best_score:
+                best_score = neighbor_score
+                best_neighbor = neighbor
+        
+        if best_score > current_score:
+            return best_neighbor
+        return None
+
+    neighborhoods = [
+        lambda assign: find_best_neighbor(assign, 1),
+        lambda assign: find_best_neighbor(assign, 2),
+        lambda assign: find_best_neighbor(assign, 3),
+    ]
+
+    for _ in range(max_restarts):
+        current_assignment = [random.choice([True, False]) for _ in range(n)]
+        
+        for _ in range(max_steps):
+            if count_satisfied_clauses(current_assignment, formula) == len(formula):
+                return current_assignment, True
+
+            k = 0
+            while k < len(neighborhoods):
+                neighbor_func = neighborhoods[k]
+                new_assignment = neighbor_func(current_assignment)
+                
+                if new_assignment is not None:
+                    current_assignment = new_assignment
+                    k = 0
+                else:
+                    k += 1
+            
+            if k == len(neighborhoods):
+                break
+
+    return None, False
+
+# --- Main Execution Block for Comparison ---
+if _name_ == '_main_':
+    N_VARS = 50
+    M_N_RATIO = 5.0
+    M_CLAUSES = int(M_N_RATIO * N_VARS)
+    K_LITERALS = 3
+    NUM_RUNS = 20
+
+    print(f"--- Lab 3: 3-SAT Solvers ---")
+    print(f"Configuration: n={N_VARS}, m={M_CLAUSES} (m/n ratio = {M_N_RATIO})")
+    print(f"Running each combination {NUM_RUNS} times to calculate penetrance.\n")
+
+    algorithms = {
+        "Hill-Climbing": (hill_climbing, {}),
+        "Beam Search (k=3)": (beam_search, {"beam_width": 3}),
+        "Beam Search (k=4)": (beam_search, {"beam_width": 4}),
+        "VND (3 Neighborhoods)": (variable_neighborhood_descent, {}),
+    }
+    
+    heuristics = {
+        "H1 (Satisfied Clauses)": count_satisfied_clauses,
+        "H2 (Satisfaction Level)": heuristic_satisfaction_level,
+    }
+    
+    results = []
+
+    for algo_name, (algo_func, args) in algorithms.items():
+        for heur_name, heur_func in heuristics.items():
+            success_count = 0
+            total_time = 0.0
+            
+            print(f"Testing: {algo_name} with {heur_name}...")
+
+            for i in range(NUM_RUNS):
+                formula = generate_ksat(K_LITERALS, M_CLAUSES, N_VARS)
+                
+                start_time = time.time()
+                solution, success = algo_func(formula, N_VARS, heuristic_func=heur_func, **args)
+                end_time = time.time()
+                
+                total_time += (end_time - start_time)
+                if success:
+                    success_count += 1
+            
+            penetrance = (success_count / NUM_RUNS) * 100
+            avg_time = total_time / NUM_RUNS
+            results.append((f"{algo_name} ({heur_name})", penetrance, avg_time))
+
+    print("\n\n" + "="*60)
+    print("      FINAL PERFORMANCE COMPARISON SUMMARY")
+    print("="*60)
+    print(f"{'Algorithm (Heuristic)':<40} {'Penetrance (%)':<15} {'Avg. Time (s)':<15}")
+    print("-" * 60)
+    for name, penetrance, avg_time in results:
+        print(f"{name:<40} {penetrance:<15.1f} {avg_time:<15.4f}")
+    print("="*60)
