@@ -1,0 +1,127 @@
+import numpy as np
+import matplotlib.pyplot as plt
+import random,math,time,os,requests
+from scipy.io import savemat,loadmat
+from PIL import Image
+def generate_dummy_lena_mat(grid_size=(4,4),image_size=256):
+    mat_filename='scrambled_lena.mat'
+    print("Downloading Lena test image...")
+    try:
+        url='http://www.lenna.org/len_std.jpg'
+        response=requests.get(url,stream=True,timeout=10)
+        response.raise_for_status()
+        img=Image.open(response.raw).convert('L')
+        img=img.resize((image_size,image_size))
+        img_array=np.array(img)
+    except requests.exceptions.RequestException as e:
+        print(f"Download failed ({e}). Using synthetic grayscale image.")
+        img_array=np.zeros((image_size,image_size),dtype=np.uint8)
+        for i in range(image_size):
+            for j in range(image_size):
+                img_array[i,j]=(i+j)%256
+    np.save('original_lena.npy',img_array)
+    print("Saved 'original_lena.npy'")
+    if os.path.exists(mat_filename):
+        print(f"'{mat_filename}' already exists. Skipping regeneration.")
+        return img_array
+    print("Slicing image and scrambling...")
+    piece_h=image_size//grid_size[0];piece_w=image_size//grid_size[1];pieces=[]
+    for i in range(grid_size[0]):
+        for j in range(grid_size[1]):
+            piece=img_array[i*piece_h:(i+1)*piece_h,j*piece_w:(j+1)*piece_w]
+            pieces.append(piece)
+    random.shuffle(pieces)
+    savemat(mat_filename,{'scrambled_pieces':np.array(pieces,dtype=object),'grid_size':np.array(grid_size)})
+    print(f"Generated '{mat_filename}'")
+    return img_array
+
+def load_puzzle_pieces(mat_filename='scrambled_lena.mat'):
+    try:
+        data=loadmat(mat_filename)
+        grid_size=tuple(data['grid_size'].flatten())
+        scrambled=data['scrambled_pieces']
+        pieces=[np.array(scrambled[i],dtype=np.uint8).squeeze() for i in range(scrambled.shape[0])]
+        print(f"Loaded {len(pieces)} grayscale pieces.")
+        return pieces,grid_size
+    except Exception as e:
+        print(f"Error loading pieces: {e}")
+        return None,None
+
+def calculate_energy(arrangement,pieces,grid_size):
+    rows,cols=grid_size
+    total=0.0
+    for r in range(rows):
+        for c in range(cols-1):
+            p1=pieces[arrangement[r,c]];p2=pieces[arrangement[r,c+1]]
+            total+=np.sum((p1[:,-1]-p2[:,0])**2)
+    for r in range(rows-1):
+        for c in range(cols):
+            p1=pieces[arrangement[r,c]];p2=pieces[arrangement[r+1,c]]
+            total+=np.sum((p1[-1,:]-p2[0,:])**2)
+    return total
+
+def solve_puzzle_sa(pieces,grid_size,max_iterations=None):
+    num_pieces=len(pieces)
+    rows,cols=grid_size
+    current=np.arange(num_pieces).reshape(grid_size)
+    current_energy=calculate_energy(current,pieces,grid_size)
+    best=np.copy(current);best_energy=current_energy
+    T=1e8;T_min=1e-3;alpha=0.9999;iteration=0
+    history=[(0,current_energy)]
+    start=time.time()
+    print("\n=== Simulated Annealing Started ===")
+    while T>T_min:
+        if max_iterations and iteration>=max_iterations:break
+        for _ in range(rows*cols):
+            iteration+=1
+            r1,c1=random.randint(0,rows-1),random.randint(0,cols-1)
+            r2,c2=random.randint(0,rows-1),random.randint(0,cols-1)
+            neighbor=np.copy(current)
+            neighbor[r1,c1],neighbor[r2,c2]=neighbor[r2,c2],neighbor[r1,c1]
+            neighbor_energy=calculate_energy(neighbor,pieces,grid_size)
+            delta=neighbor_energy-current_energy
+            if delta<0 or random.random()<math.exp(-delta/T):
+                current=neighbor;current_energy=neighbor_energy
+                if current_energy<best_energy:
+                    best=np.copy(current);best_energy=current_energy
+                    history.append((iteration,best_energy))
+        T*=alpha
+        if iteration%100==0:print(f"Iter {iteration:6d} | Temp {T:10.2e} | Best Energy {best_energy:12.2f}")
+    print(f"\n=== Done in {time.time()-start:.2f}s ===")
+    print(f"Initial Energy: {history[0][1]:.2f}\nFinal Energy:   {best_energy:.2f}")
+    return best,history
+
+def reconstruct_image(arrangement,pieces,grid_size):
+    rows,cols=grid_size;ph,pw=pieces[0].shape
+    full=np.zeros((rows*ph,cols*pw),dtype=np.uint8)
+    for r in range(rows):
+        for c in range(cols):
+            full[r*ph:(r+1)*ph,c*pw:(c+1)*pw]=pieces[arrangement[r,c]]
+    return full
+
+def display_results(pieces,solved_arr,grid_size,history=None,original=None):
+    initial_arr=np.arange(len(pieces)).reshape(grid_size)
+    scrambled=reconstruct_image(initial_arr,pieces,grid_size)
+    solved=reconstruct_image(solved_arr,pieces,grid_size)
+    fig,axs=plt.subplots(1,4 if history else 3,figsize=(20,6))
+    if original is not None:
+        axs[0].imshow(original,cmap='gray');axs[0].set_title("Original Image",fontsize=14,fontweight='bold');axs[0].axis('off')
+    else:
+        axs[0].imshow(scrambled,cmap='gray');axs[0].set_title("Original (Unavailable)",fontsize=14,fontweight='bold');axs[0].axis('off')
+    axs[1].imshow(scrambled,cmap='gray');axs[1].set_title("Initial Scrambled Puzzle",fontsize=14,fontweight='bold');axs[1].axis('off')
+    axs[2].imshow(solved,cmap='gray');axs[2].set_title("Solved Puzzle (SA)",fontsize=14,fontweight='bold');axs[2].axis('off')
+    if history:
+        ax3=axs[3];iters,energies=zip(*history)
+        ax3.plot(iters,energies,'b-',linewidth=2);ax3.set_yscale('log')
+        ax3.set_xlabel('Iterations',fontsize=12);ax3.set_ylabel('Energy',fontsize=12)
+        ax3.set_title("Energy Convergence",fontsize=14,fontweight='bold');ax3.grid(True,alpha=0.3)
+    plt.tight_layout();plt.show()
+
+if __name__=="__main__":
+    random.seed(42);np.random.seed(42)
+    original=generate_dummy_lena_mat(grid_size=(4,4),image_size=256)
+    pieces,grid_size=load_puzzle_pieces()
+    if pieces:
+        solved_arr,history=solve_puzzle_sa(pieces,grid_size,max_iterations=2010999)
+        display_results(pieces,solved_arr,grid_size,history,original)
+    else:print("Failed load puzzle pieces.")
